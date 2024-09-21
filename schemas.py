@@ -32,6 +32,39 @@ class BorrowedBookSchema(Base):
     return_date = Column(String)
     # 1 == borrowed, 2 == returned
     status =  Column(Integer)
-# Create the database tables if they don't exist
 
+class PurchasedBookSchema(Base):
+    __tablename__ = "purchased_books"
+
+    id = Column(Integer, primary_key=True, index=True)
+    book_id = Column(Integer, ForeignKey("books.id"))
+    user_id = Column(String, ForeignKey("users.id"))
+    quantity = Column(Integer)
+    purchase_date = Column(String)
+
+class ReceiptSchema(Base):
+    __tablename__ = "receipts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    book_ids = Column(String)
+    user_id = Column(String, ForeignKey("users.id"))
+    total_amount = Column(Integer)
+    status = Column(Integer)
+    mpesa_code = Column(String, nullable=True)
+    purchase_date = Column(String)
+
+
+class MpesaSchema(Base):
+    __tablename__ = "mpesas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    checkout_request_id = Column(String)
+    user_id = Column(String, ForeignKey("users.id"))
+    status = Column(Integer)
+    amount = Column(Integer, nullable=True)
+    paying_phone_number = Column(Integer)
+    receipt_number = Column(String)
+    transaction_date = Column(String)
+
+# Create the database tables if they don't exist
 Base.metadata.create_all(bind=engine)
