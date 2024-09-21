@@ -14,7 +14,7 @@ app = FastAPI()
 
 origins = [
     "http://localhost:5173",  # Adjust the port if your frontend runs on a different one
-    "https://yourfrontenddomain.com",
+    "https://lib-frontend-ehrc.onrender.com",
 ]
 
 app.add_middleware(
