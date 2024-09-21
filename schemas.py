@@ -49,6 +49,7 @@ class ReceiptSchema(Base):
     book_ids = Column(String)
     user_id = Column(String, ForeignKey("users.id"))
     total_amount = Column(Integer)
+    #1 == unpaid, 2 == paid
     status = Column(Integer)
     mpesa_code = Column(String, nullable=True)
     purchase_date = Column(String)
@@ -60,6 +61,7 @@ class MpesaSchema(Base):
     id = Column(Integer, primary_key=True, index=True)
     checkout_request_id = Column(String)
     user_id = Column(String, ForeignKey("users.id"))
+    #1 == unresolved, 2 == failed, succeeded == 3
     status = Column(Integer)
     amount = Column(Integer, nullable=True)
     paying_phone_number = Column(Integer)

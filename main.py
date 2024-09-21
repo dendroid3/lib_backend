@@ -5,9 +5,10 @@ from database import SessionLocal
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
+from datetime import datetime, timedelta
 import httpx
 import base64
+from typing import List
 
 app = FastAPI()
 
@@ -75,6 +76,18 @@ class MpesaModel(BaseModel):
     receipt_number: str
     transaction_date: str
 
+class BookToBePurchasedModel(BaseModel):
+    id: int
+    title: str
+    isbn: str
+    stock: int
+    price: int
+    author: str
+    quantity: int
+
+class BooksArrayModel(BaseModel):
+    books_array: List[BookToBePurchasedModel]
+
 
 def create_user(db: Session, user: UserSchema):
     db_user = UserSchema(username=user.username, email=user.email, id=user.id, role=user.role)
@@ -114,9 +127,10 @@ def delete_book(book_id: int, db: SessionLocal = Depends(get_db)):
 @app.get("/books/borrow/{user_id}/{book_id}")
 def borrow_book(book_id: int, user_id: str, db: Session = Depends(get_db)):
     now = datetime.now()
+    return_date = datetime.now() + timedelta(days=14)
     book = db.query(BookSchema).filter(BookSchema.id == book_id).first()
     if book and book.stock > 0:
-        borrowed_book = BorrowedBookSchema(book_id=book_id, user_id=user_id, borrowed_date=now.strftime("%d-%m-%Y"), return_date=now.strftime("%d-%m-%Y"), status=1)
+        borrowed_book = BorrowedBookSchema(book_id=book_id, user_id=user_id, borrowed_date=now.strftime("%d-%m-%Y"), return_date=return_date.strftime("%d-%m-%Y"), status=1)
         book.stock -= 1
         db.add(borrowed_book)
         db.commit()
@@ -193,27 +207,29 @@ async def initiate_stk_push(token: str, amount: int, phone_number: str, message:
     return response.json()
 
 @app.post("/books/purchase/{user_id}/{phone_number}/{total_amount}")
-async def purchase_book(user_id: str, phone_number: int, total_amount: int ,db: Session = Depends(get_db)):
+async def purchase_book(user_id: str, phone_number: int, books_array: BooksArrayModel, total_amount: int ,db: Session = Depends(get_db)):
+    # return books_array
     # return total_amount
     now = datetime.now()
     books_ids = ''
-    # total_amount = 0
+    total_amount = 0
     # Reduce stock of purchased books
-    # for book_to_purchase in books_array:
-    #     book = db.query(BookSchema).filter(BookSchema.id == book_to_purchase.id).first()
-    #     if book and book.stock > book_to_purchase.quantity:
-    #         purchased_book = PurchasedBookModel(book_id=book_to_purchase.id, user_id=user_id, purchase_date=now.strftime("%d-%m-%Y"))
-    #         book.stock -= 1
-    #         db.add(purchased_book)
-    #         db.commit()
-    #         books_ids = books_ids + book_to_purchase.id + "_"
-    #         total_amount += (book_to_purchase.quantity * book.price)
-    #     # return JSONResponse(content=content, status_code=200)
+    for book_to_purchase in books_array.books_array:
+        # return book_to_purchase
+        book = db.query(BookSchema).filter(BookSchema.id == book_to_purchase.id).first()
+        if book and book.stock > book_to_purchase.quantity:
+            # purchased_book = PurchasedBookSchema(book_id=book_to_purchase.id, user_id=user_id, quantity=book_to_purchase.id, purchase_date=now.strftime("%d-%m-%Y"))
+            book.stock -= 1
+            # db.add(purchased_book)
+            db.commit()
+            books_ids = books_ids + str(book_to_purchase.id) + "_"
+            total_amount += (book_to_purchase.quantity * book.price)
     
     # Create receipt
-    # receipt = ReceiptSchema(book_ids=books_ids, user_id=book.user_id, total_amount=total_amount, status=1, mpesa_code='', purchase_date=now.strftime("%d-%m-%Y"))
-    # db.add(receipt)
-    # db.commit()
+    receipt = ReceiptSchema(book_ids=books_ids, user_id=user_id, total_amount=total_amount, status=1, mpesa_code='', purchase_date=now.strftime("%d-%m-%Y"))
+    db.add(receipt)
+    db.commit()
+    # return receipt
     
     # Request Mpesa
         # Request Auth
@@ -231,11 +247,51 @@ async def purchase_book(user_id: str, phone_number: int, total_amount: int ,db: 
         token_data = response.json()
         
         # send deposit request
-
         token = token_data["access_token"]
 
-        return await initiate_stk_push(token, total_amount, phone_number, "Payment")
+        mpesa_response = await initiate_stk_push(token, total_amount, phone_number, "Payment")
+
+        mpesa_record = MpesaSchema(checkout_request_id=mpesa_response['CheckoutRequestID'], user_id=user_id, status=1, amount=total_amount, paying_phone_number=phone_number, receipt_number=receipt.id, transaction_date=datetime.now().strftime("%Y%m%d%H%M%S"))
+        db.add(mpesa_record)
+        db.commit()
+
+        return mpesa_record
     else:
         raise HTTPException(status_code=response.status_code, detail="Failed to fetch token")
 
-    # raise HTTPException(status_code=404, detail="Book not available")
+@app.get("/user/get_receipts/{user_id}")
+async def get_receipts(user_id: str, db: Session = Depends(get_db)):
+    receipts = db.query(ReceiptSchema).filter(ReceiptSchema.user_id == user_id).all()
+    return receipts
+
+@app.get("/user/pay_receipt/{receipt_id}/{phone_number}")
+async def pay_receipt(receipt_id: int, phone_number: int, db: Session = Depends(get_db)):
+    receipt = db.query(ReceiptSchema).filter(ReceiptSchema.id == receipt_id).first()
+    # Request Mpesa
+        # Request Auth
+    mpesa_auth_url = 'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials'
+    mpesa_customer_key = 'zmDTtXkhe4diI75DwTHrfGai11MgVvkx'
+    mpesa_customer_secret = 'onNX4p5OrApTaHRj'
+    headers = {
+        "Authorization": f"Basic {get_encoded_credentials(mpesa_customer_key, mpesa_customer_secret)}"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(mpesa_auth_url, headers=headers)
+    if response.status_code == 200:
+        token_data = response.json()
+        
+        # send deposit request
+        token = token_data["access_token"]
+
+        mpesa_response = await initiate_stk_push(token, receipt.total_amount, phone_number, "Payment")
+
+        if mpesa_response['ResponseDescription']:
+            mpesa_record = MpesaSchema(checkout_request_id=mpesa_response['CheckoutRequestID'], user_id=receipt.user_id, status=1, amount=receipt.total_amount, paying_phone_number=phone_number, receipt_number=receipt.id, transaction_date=datetime.now().strftime("%Y%m%d%H%M%S"))
+            db.add(mpesa_record)
+            db.commit()
+            return mpesa_response['ResponseDescription']
+
+        return mpesa_response['errorMessage']
+    else:
+        raise HTTPException(status_code=response.status_code, detail="Failed to fetch token")
