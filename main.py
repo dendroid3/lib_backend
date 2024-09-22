@@ -219,9 +219,9 @@ async def purchase_book(user_id: str, phone_number: int, books_array: BooksArray
         # return book_to_purchase
         book = db.query(BookSchema).filter(BookSchema.id == book_to_purchase.id).first()
         if book and book.stock > book_to_purchase.quantity:
-            # purchased_book = PurchasedBookSchema(book_id=book_to_purchase.id, user_id=user_id, quantity=book_to_purchase.id, purchase_date=now.strftime("%d-%m-%Y"))
+            purchased_book = PurchasedBookSchema(book_id=book_to_purchase.id, user_id=user_id, quantity=book_to_purchase.id, purchase_date=now.strftime("%d-%m-%Y"))
             book.stock -= 1
-            # db.add(purchased_book)
+            db.add(purchased_book)
             db.commit()
             books_ids = books_ids + str(book_to_purchase.id) + "_"
             total_amount += (book_to_purchase.quantity * book.price)
@@ -256,7 +256,7 @@ async def purchase_book(user_id: str, phone_number: int, books_array: BooksArray
         db.add(mpesa_record)
         db.commit()
 
-        return mpesa_record
+        return mpesa_response
     else:
         raise HTTPException(status_code=response.status_code, detail="Failed to fetch token")
 
@@ -365,3 +365,15 @@ def record_mpesa_transaction_complete(payload: Payload, db: Session = Depends(ge
     db.commit()
 
     return receipt
+
+@app.get('/book/mark_returned/{borrowed_book_id}')
+def mark_book_returned(borrowed_book_id: int, db: Session = Depends(get_db)):
+    borrowed_book = db.query(BorrowedBookSchema).filter(BorrowedBookSchema.id == borrowed_book_id).first()
+    borrowed_book.status = 2
+    db.commit()
+
+    book = db.query(BookSchema).filter(BookSchema.id == borrowed_book.book_id).first()
+    book.stock += 1
+    db.commit()
+
+    return "Book returned successfully"
