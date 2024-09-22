@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from schemas import UserSchema, BookSchema, BorrowedBookSchema, PurchasedBookSchema, ReceiptSchema, MpesaSchema
 from database import SessionLocal
@@ -9,8 +9,15 @@ from datetime import datetime, timedelta
 import httpx
 import base64
 from typing import List, Any
+import logging
+import json
 
 app = FastAPI()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 
 origins = [
@@ -105,6 +112,11 @@ def create_book(db: Session, book: BookSchema):
 def register_user(user: UserModel, db: Session = Depends(get_db)):
     return create_user(db=db, user=user)
 
+@app.get("/sign_in/{user_id}")
+def sign_in_user(user_id: str, db: Session = Depends(get_db)):
+    user = db.query(UserSchema).filter(UserSchema.id == user_id).first()
+    return user
+
 @app.post("/admin/add_book")
 def add_book(book: BookModel, db: Session = Depends(get_db)):
     return create_book(db=db, book=book)
@@ -177,8 +189,8 @@ def get_encoded_credentials(consumer_key: str, consumer_secret: str) -> str:
 
 async def initiate_stk_push(token: str, amount: int, phone_number: str, message: str):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    passkey = 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919'
-    data_to_encode = '174379' + passkey + timestamp
+    passkey = 'c9ad901de83c496e631b8f3f6bbda12924ee956eb4684a00c2da50946d63c143'
+    data_to_encode = '4115361' + passkey + timestamp
     password = base64.b64encode(data_to_encode.encode('utf-8')).decode('utf-8')
     # password = "MTc0Mzc5YmZiMjc5ZjlhYTliZGJjZjE1OGU5N2RkNzFhNDY3Y2QyZTBjODkzMDU5YjEwZjc4ZTZiNzJhZGExZWQyYzkxOTIwMjQwOTIxMTkwMDEx"
 
@@ -188,15 +200,15 @@ async def initiate_stk_push(token: str, amount: int, phone_number: str, message:
     }
 
     payload = {
-        "BusinessShortCode": 174379,
+        "BusinessShortCode": 4115361,
         "Password": password,
         "Timestamp": timestamp,
         "TransactionType": "CustomerPayBillOnline",
         "Amount": amount,
         "PartyA": phone_number,  # The phone number initiating the payment
-        "PartyB": 174379,  # The Business Shortcode receiving the payment
+        "PartyB": 4115361,  # The Business Shortcode receiving the payment
         "PhoneNumber": phone_number,
-        "CallBackURL": 'https://lib-backend-hmwd.onrender.com/transaction_call_back',
+        "CallBackURL": 'https://b317-41-89-227-171.ngrok-free.app/api/trans',
         "AccountReference": message,  # Can be any identifier for the transaction
         "TransactionDesc": message
     }
@@ -266,7 +278,8 @@ async def get_receipts(user_id: str, db: Session = Depends(get_db)):
     return receipts
 
 @app.get("/user/pay_receipt/{receipt_id}/{phone_number}")
-async def pay_receipt(receipt_id: int, phone_number: int, db: Session = Depends(get_db)):
+async def pay_receipt(receipt_id: int, phone_number: int, db: Session = Depends(get_db), request: Request = None):
+  
     receipt = db.query(ReceiptSchema).filter(ReceiptSchema.id == receipt_id).first()
     # Request Mpesa
         # Request Auth
@@ -340,31 +353,46 @@ class Payload(BaseModel):
     Body: Body
 
 @app.post('/transaction_call_back')
-def record_mpesa_transaction_complete(payload: Payload, db: Session = Depends(get_db)):
+async def record_mpesa_transaction_complete(payload: Payload, db: Session = Depends(get_db), request: Request = None):
+
+    logger.info(f"Request TURL: {request.url}")
+
+    body = await request.body()  # Get the request body
+    
+    try:
+        body_json = json.loads(body.decode('utf-8'))  # Parse body as JSON
+        logger.info(f"Request body (JSON): {json.dumps(body_json, indent=4)}")  # Log the JSON body pretty-printed
+    except json.JSONDecodeError:
+        logger.warning("Request body is not valid JSON")  # Log if the body is not valid JSON
+
+    logger.info(f"Request URL: {request.url}")
+    logger.info(f"Request method: {request.method}")
+
+    return
     # Deconstruct the payload
-    stk_callback = payload.Body.stkCallback
-    checkout_request_id = stk_callback.CheckoutRequestID
-    result_code = stk_callback.ResultCode
+    # stk_callback = payload.Body.stkCallback
+    # checkout_request_id = stk_callback.CheckoutRequestID
+    # result_code = stk_callback.ResultCode
     
-    # Update mpesa record
-    mpesa_record = db.query(MpesaSchema).filter(MpesaSchema.checkout_request_id == checkout_request_id).first()
-    if mpesa_record is None:
-        return
+    # # Update mpesa record
+    # mpesa_record = db.query(MpesaSchema).filter(MpesaSchema.checkout_request_id == checkout_request_id).first()
+    # if mpesa_record is None:
+    #     return
     
-    if result_code > 0:
-        mpesa_record.status = 2
-        db.commit()
-        return
+    # if result_code > 0:
+    #     mpesa_record.status = 2
+    #     db.commit()
+    #     return
     
-    mpesa_record.status = 3
-    db.commit()
+    # mpesa_record.status = 3
+    # db.commit()
 
-    # Update receipt 
-    receipt = db.query(ReceiptSchema).filter(ReceiptSchema.id == mpesa_record.receipt_number).first()
-    receipt.status = 2
-    db.commit()
+    # # Update receipt 
+    # receipt = db.query(ReceiptSchema).filter(ReceiptSchema.id == mpesa_record.receipt_number).first()
+    # receipt.status = 2
+    # db.commit()
 
-    return receipt
+    # return receipt
 
 @app.get('/book/mark_returned/{borrowed_book_id}')
 def mark_book_returned(borrowed_book_id: int, db: Session = Depends(get_db)):
