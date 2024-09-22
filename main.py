@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 import httpx
 import base64
-from typing import List
+from typing import List, Any
 
 app = FastAPI()
 
@@ -160,6 +160,7 @@ def get_books_borrowed_by_admin(db: Session = Depends(get_db)):
     borrowed_books = db.query(BorrowedBookSchema).all()
     for borrowed_book in borrowed_books:
         borrowed_book.book = db.query(BookSchema).filter(BookSchema.id == borrowed_book.book_id).first()
+        borrowed_book.user = db.query(UserSchema).filter(UserSchema.id == borrowed_book.user_id).first()
     return borrowed_books
 
 @app.get("/admin/get_purchased_books")
@@ -195,7 +196,7 @@ async def initiate_stk_push(token: str, amount: int, phone_number: str, message:
         "PartyA": phone_number,  # The phone number initiating the payment
         "PartyB": 174379,  # The Business Shortcode receiving the payment
         "PhoneNumber": phone_number,
-        "CallBackURL": 'https://example.com',
+        "CallBackURL": 'https://lib-backend-hmwd.onrender.com/transaction_call_back',
         "AccountReference": message,  # Can be any identifier for the transaction
         "TransactionDesc": message
     }
@@ -295,3 +296,72 @@ async def pay_receipt(receipt_id: int, phone_number: int, db: Session = Depends(
         return mpesa_response['errorMessage']
     else:
         raise HTTPException(status_code=response.status_code, detail="Failed to fetch token")
+
+@app.get("/admin/get_receipts")
+def admin_get_all_receipts(db: Session = Depends(get_db)):
+    receipts = db.query(ReceiptSchema).all()
+    for receipt in receipts:
+        books = []
+
+        receipt.user = db.query(UserSchema).filter(UserSchema.id == receipt.user_id).first()
+        books_ids = receipt.book_ids.split("_")
+        for book_id in books_ids:
+            book = db.query(BookSchema).filter(BookSchema.id == book_id).first()
+            if book:
+                books.append(book.title + " by " + book.author)
+
+        receipt.books = books
+    return receipts
+
+
+# Define a model for the callback metadata item
+class CallbackItem(BaseModel):
+    Name: str
+    Value: Any
+
+# Define a model for the callback metadata
+class CallbackMetadata(BaseModel):
+    Item: List[CallbackItem]
+
+# Define a model for the stkCallback
+class StkCallback(BaseModel):
+    MerchantRequestID: str
+    CheckoutRequestID: str
+    ResultCode: int
+    ResultDesc: str
+    CallbackMetadata: CallbackMetadata
+
+# Model for Body
+class Body(BaseModel):
+    stkCallback: StkCallback
+
+# The top-level model
+class Payload(BaseModel):
+    Body: Body
+
+@app.post('/transaction_call_back')
+def record_mpesa_transaction_complete(payload: Payload, db: Session = Depends(get_db)):
+    # Deconstruct the payload
+    stk_callback = payload.Body.stkCallback
+    checkout_request_id = stk_callback.CheckoutRequestID
+    result_code = stk_callback.ResultCode
+    
+    # Update mpesa record
+    mpesa_record = db.query(MpesaSchema).filter(MpesaSchema.checkout_request_id == checkout_request_id).first()
+    if mpesa_record is None:
+        return
+    
+    if result_code > 0:
+        mpesa_record.status = 2
+        db.commit()
+        return
+    
+    mpesa_record.status = 3
+    db.commit()
+
+    # Update receipt 
+    receipt = db.query(ReceiptSchema).filter(ReceiptSchema.id == mpesa_record.receipt_number).first()
+    receipt.status = 2
+    db.commit()
+
+    return receipt
