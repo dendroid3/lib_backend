@@ -189,10 +189,14 @@ def get_encoded_credentials(consumer_key: str, consumer_secret: str) -> str:
 
 async def initiate_stk_push(token: str, amount: int, phone_number: str, message: str):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    passkey = 'c9ad901de83c496e631b8f3f6bbda12924ee956eb4684a00c2da50946d63c143'
-    data_to_encode = '4115361' + passkey + timestamp
+    passkey = 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919'
+    data_to_encode = '174379' + passkey + timestamp
     password = base64.b64encode(data_to_encode.encode('utf-8')).decode('utf-8')
     # password = "MTc0Mzc5YmZiMjc5ZjlhYTliZGJjZjE1OGU5N2RkNzFhNDY3Y2QyZTBjODkzMDU5YjEwZjc4ZTZiNzJhZGExZWQyYzkxOTIwMjQwOTIxMTkwMDEx"
+
+    # password = base64.b64encode(data_to_encode.encode('utf-8')).decode('utf-8')
+    # password = "MTc0Mzc5YmZiMjc5ZjlhYTliZGJjZjE1OGU5N2RkNzFhNDY3Y2QyZTBjODkzMDU5YjEwZjc4ZTZiNzJhZGExZWQyYzkxOTIwMjQwOTIxMTkwMDEx"
+
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -200,13 +204,13 @@ async def initiate_stk_push(token: str, amount: int, phone_number: str, message:
     }
 
     payload = {
-        "BusinessShortCode": 4115361,
+        "BusinessShortCode": 174379,
         "Password": password,
         "Timestamp": timestamp,
         "TransactionType": "CustomerPayBillOnline",
         "Amount": amount,
         "PartyA": phone_number,  # The phone number initiating the payment
-        "PartyB": 4115361,  # The Business Shortcode receiving the payment
+        "PartyB": 174379,  # The Business Shortcode receiving the payment
         "PhoneNumber": phone_number,
         "CallBackURL": 'https://b317-41-89-227-171.ngrok-free.app/api/trans',
         "AccountReference": message,  # Can be any identifier for the transaction
